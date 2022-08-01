@@ -1,0 +1,83 @@
+# -*- coding: UTF-8 -*-
+import numpy as np
+import matplotlib.pyplot as plt
+from calculations import *
+from scipy.optimize import curve_fit
+
+import latticeBoltz as lb
+
+def poiseuille_flow(nx=50,ny=40,omega=0.5,nsteps=1000):
+    '''Simulation of the Hagen-Poiseuille flow with implemented solid bottom wall and top wall. A pressure gradient of 2% is implemented
+        by initiating higher or lower density at the boundary nodes.
+        The function plots the developing velocity profile in the x-direction and a streamplot of the velocity at the final timestep.
+        Parameters: 
+                    nx: size of grid in x-direction (default=200)
+                    ny: size of grid in y-direction (default=150)
+                    omega: relaxation parameter (default=0.5)
+                    nsteps: number of timesteps (default=3000)
+    '''
+    
+    #initiating density to 1 everywhere
+    rho = np.ones((nx,ny))
+    
+    #initiating the velocity field to zero everywhere
+    u_aij=np.zeros((2,nx,ny))
+    
+    #initiating p_in and p_out with 2% density variation
+    pin=np.ones((nx,ny))*1.01
+    pout=np.ones((nx,ny))*0.99
+    
+    #setting up plots
+    fig= plt.figure()
+    ax1 = fig.add_subplot(2,1,1)
+    ax2 = fig.add_subplot(2,1,2)
+    
+    #instantiating a lattice boltzmann simulator
+    lbs=lb.LatticeB(rho,u_aij)
+    
+    #iterating the simulation
+    for i in range(nsteps):
+        lbs.collision(omega)
+        lbs.pressure_grad(pin, pout)
+        lbs.streaming()
+        lbs.bottom_wall()
+        lbs.top_wall()
+        
+        #plotting the velocity in x-direction every 100th timestep
+        if i%100 == 0:
+            #recalculating the velocity
+            ux_ij=velocity_calc(lbs.f_cij)[0]
+            #slicing away the dry nodes
+            ax1.plot(ux_ij[nx-1, 1:-1],alpha=0.7)
+            print('hej')
+    
+    #recalculating velocity at the end of simulation      
+    velocity=velocity_calc(lbs.f_cij)
+    velocity_x=velocity[0]
+    
+    #defining analytical solution
+    def velocity_profile(y):
+        kin_visc=(1/3) * ((1/omega) - 0.5)
+        pin_end=lbs.dens_ij[1,ny//2]
+        pout_end=lbs.dens_ij[-2,ny//2]
+        my=kin_visc #dynamic viscosity
+        h=ny-2
+        dpdx=((pout_end-pin_end)*(1/3))/(nx-3)
+        return ((-0.5/my)*dpdx*y*(h-y))
+        
+    #setting labels and title
+    ax1.set_xlabel('y')
+    ax1.grid()
+    ax1.set_ylabel('ux')
+    ax1.set_title(f'Development of the Poiseuille flow over {nsteps} timesteps')
+    
+    x_th=np.linspace(0,ny-2,100) #det var 0.5,ny-2.5,ny-2
+    x_exp=np.arange(ny-2)+0.5
+    ax2.plot(x_exp, velocity_x[nx//2, 1:-1], label='experimental')
+    ax2.plot(x_th,velocity_profile(x_th), label='theoretical')
+    ax2.legend()
+    
+    #time to plot
+    plt.subplots_adjust(hspace=0.7)
+    plt.show()
+   
