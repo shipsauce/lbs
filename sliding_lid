@@ -1,0 +1,46 @@
+# -*- coding: UTF-8 -*-
+import numpy as np
+import matplotlib.pyplot as plt
+from calculations import *
+from scipy.optimize import curve_fit
+
+import latticeBoltz as lb
+
+def sliding_lid(nx=300,ny=300,omega=1.2,nsteps=3000):
+    '''
+
+        Parameters: 
+                    nx: size of grid in x-direction (default=300)
+                    ny: size of grid in y-direction (default=300)
+                    omega: relaxation parameter (default=0.5)
+                    nsteps: number of timesteps (default=3000)
+    '''
+    
+    #initiating density to 1 everywhere
+    rho = np.ones((nx,ny))
+    
+    #initiating the velocity field to zero everywhere
+    u_aij=np.zeros((2,nx,ny))
+    
+    #streamplot
+    x=np.arange(0,nx-2)
+    y=np.arange(0,ny-2)
+    X,Y = np.meshgrid(y,x)
+    
+    #instantiating a lattice boltzmann simulator
+    lbs=lb.LatticeB(rho,u_aij)
+    
+    #iterating the simulation
+    for i in range(nsteps):
+        lbs.streaming_col(omega)
+        lbs.bottom_pois()
+        lbs.right_wall()
+        lbs.left_wall()
+        lbs.top_pois()
+        
+    
+    velocity=velocity_calc(lbs.f_cij)
+    velocity_x=velocity[0,1:-1,1:-1]
+    velocity_y=velocity[1,1:-1,1:-1]
+    plt.streamplot(X,Y,velocity_x.T,velocity_y.T)
+    plt.show()          
