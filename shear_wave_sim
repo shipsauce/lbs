@@ -1,0 +1,215 @@
+# -*- coding: UTF-8 -*-
+import numpy as np
+import matplotlib.pyplot as plt
+from calculations import *
+from scipy.optimize import curve_fit
+
+import latticeBoltz as lb
+
+c_ca=np.array([[0,1,0,-1,0,1,-1,-1,1],
+       [0,0,1,0,-1,1,1,-1,-1]]).T
+
+
+
+def shear_wave_density(nx=300,ny=400,omega=0.5,epsilon=0.01, nsteps=3000, p0=1):
+    '''Simulates the development of a sine wave density perturbation. The function creates a plot
+        over the decaying amplitude of the density perturbation.
+        Parameters: 
+                    nx: size of grid in x-direction (default=300)
+                    ny: size of grid in y-direction (default=400)
+                    omega: relaxation parameter (default=0.5)
+                    epsilon: amplitude a0 of sine wave (default=0.01)
+                    nsteps: number of timesteps (default=3000)
+                    p0: initial density (default=1)
+        Returns:
+                    values: an array of amplitude-values for the sine wave
+    '''
+    #initiating density to 1 everywhere
+    rho = np.ones((nx,ny))
+    
+    #initiating a density perturbation
+    rho= rho*p0 + epsilon*np.sin(2*np.pi*np.arange(nx)/(nx))[:,np.newaxis]
+    
+    #initiating the velocity field to zero everywhere
+    u_aij=np.zeros((2,nx,ny))
+
+    #instantiating a lattice boltzmann simulator
+    lbs=lb.LatticeB(rho,u_aij)
+
+    #setting up array for collecting amplitude values
+    values=np.zeros(nsteps)
+    
+    #iterating over streaming and collision
+    for step in range(nsteps):
+        lbs.streaming_col(omega)
+        density=density_calc(lbs.f_cij) #recalculating density
+        values[step]=density[int((ny/4)-1),0] #saving the amplitude value at L/4
+        
+    #time to plot the collected values
+    plt.plot(values)
+    plt.xlabel('n timesteps')
+    plt.ylabel('a(t)')
+    plt.title(f'Density perturbation at L/4 over time t, omega={omega}')
+    plt.grid()
+    plt.show()
+    
+    return values
+
+def shear_wave_velocity(nx=200,ny=150,omega=0.5,epsilon=0.01, nsteps=3000):
+    '''Simulates the development of a sine wave velocity perturbation. If omega is just one value, the function generates a
+        plot over the decaying wave and a plot over the exponential decay of the amplitude. If omega is a list of values, the
+        function plots a comparison of the theoretical vs experimental kinematic viscosity at the specified values of omega.
+        It will also plot the normalized theoretical and experimental wave decay for every omega.
+        
+        Parameters: 
+                    nx: size of grid in x-direction (default=200)
+                    ny: size of grid in y-direction (default=150)
+                    omega: collision frequency (default=0.5)
+                    epsilon: amplitude a0 of sine wave (default=0.01)
+                    nsteps: number of timesteps (default=3000)
+        Returns: 
+                    --- if omega is one value ---
+                    values: an array of amplitude-values for the sine wave
+                    
+                    --- if omega is a list of values ---
+                    exp_viscosity: array of experimental values for the kinematic viscosity
+                    thrt_viscosity: array of theoretical values for the kinematic viscosity
+    '''
+    #setting density to one everywhere
+    rho=np.ones((nx,ny))
+    
+    #setting up the velocity field
+    ux_ij=np.zeros((nx,ny))
+    uy_ij=np.zeros((nx,ny))
+    u_aij=np.zeros((2,nx,ny))
+    
+    #initiating velocity perturbations along x-axis
+    ux_ij = ux_ij + epsilon*np.sin(2*np.pi*np.arange(ny)/(ny))[np.newaxis,:]
+
+    u_aij[0]=ux_ij
+    u_aij[1]=uy_ij
+    
+    #instantiating a lattice boltzmann simulation
+    lbs=lb.LatticeB(rho,u_aij)
+    
+    if type(omega) == float: #when omega is just one value
+        #setting up plots
+        fig= plt.figure()
+        ax1 = fig.add_subplot(2,1,1)
+        ax2 = fig.add_subplot(2,1,2)
+        
+        #setting up the array for amplitude values
+        values=np.zeros(nsteps+1)
+        values[0]=lbs.velo_aij[0][0][int((ny/4)-1)] #saving a(0)
+        
+        #iterating over streaming and collision
+        for step in range(nsteps):
+            lbs.streaming_col(omega)
+            u_aij=velocity_calc(lbs.f_cij) #recalculating velocity field manually after streaming and collision
+            values[step+1]=np.abs(u_aij[0][0][int((ny/4)-1)])/values[0] #normalizing a(t) as we go
+            
+            #plotting the sine wave perturbation every 250th timestep to visualize its decay
+            if step % 250==0:
+                ax1.plot(u_aij[0][0], label=f'ux(y) at t={step}')
+        
+        #decorating the plot
+        ax1.set_xlabel('y')
+        ax1.set_ylabel('ux(y)')
+        ax1.set_title(f'Velocity perturbation ux as a function of y, omega={omega}')
+        ax1.grid()
+        ax1.legend(prop={'size': 7})
+        plt.subplots_adjust(hspace=0.7)
+                
+        values[0]=1.0 #a(0) is now 1
+        
+        #plotting the normalized amplitude decay of the perturbation over time t
+        ax2.set_xlabel('n timesteps')
+        ax2.set_ylabel('a(t)/a(0)')
+        ax2.set_title('Amplitude decay of shear wave over time t')
+        ax2.plot(values)
+        ax2.grid()
+        
+        plt.show()
+        
+        return values
+#-------------------------------------------------------------------------------------------- 
+    #when omega is a list of values
+    else: 
+        a=len(omega) #saving value of the length of the list
+        a_i=np.arange(a) #creating array of values for iteration
+        
+        #setting up plots
+        fig= plt.figure()
+        ax2 = fig.add_subplot(2,1,1)
+        ax3 = fig.add_subplot(2,1,2)
+        
+        #setting up matrix for saving amplitude values, every row i contains nsteps+1 amplitude values for the ith omega
+        values_ij = np.zeros((a,nsteps+1))
+        
+        print('start') #printing start because these nested iterations are the bottleneck step, i want to be able to track it
+        #looping over every value of omega
+        for i,w in zip(a_i,omega):
+            values_ij[i][0]=lbs.velo_aij[0][0][int((ny/4)-1)] #saving a(0) before streaming and collision
+            for step in range(nsteps):
+                lbs.streaming_col(w)
+                u_current=velocity_calc(lbs.f_cij) #recalculating velocity field manually after streaming and collision
+                values_ij[i][step+1]=np.abs(u_current[0][0][int((ny/4)-1)]) #saving a(t) without normalizing
+                
+            lbs=lb.LatticeB(rho,u_aij) #instantiating a new simulator to perform simulation with the next omega
+            print(f'Loop number:{i}')
+            print('Calculations for one value of omega now done')
+            
+        print('stop')
+        
+        #defining the exponential decay function    
+        def wave_decay(t,viscosity):
+            return epsilon*np.exp(-viscosity * (2*np.pi/ny)**2 * t)
+        
+        #setting up arrays for values of experimental and theoretical viscosity
+        exp_viscosity=np.zeros(a)
+        thrt_viscosity=np.zeros(a)
+        
+        #experimental viscosity is calculated from a curve fit on the amplitude values for each omega
+        #simultaneously, a theoretical value is calculated for each omega
+        for i,w in zip(a_i,omega):
+            exp_viscosity[i] = curve_fit(wave_decay, xdata=np.arange(nsteps+1), ydata=values_ij[i,:])[0][0]
+            thrt_viscosity[i] = (1/3) * ((1/w) - 0.5)
+        
+        #normalized experimental shear wave decay
+        for i,w in zip(a_i,omega):
+            values_ij[i]=values_ij[i]/values_ij[i][0]
+            ax2.plot(values_ij[i], label=f'w={w}')
+        ax2.set_title('Normalized experimental shear wave decay')
+        ax2.set_xlabel('n timestep')
+        ax2.set_ylabel('a(t)/a(0)')
+        ax2.grid()
+        ax2.legend()
+        
+        #normalized theoretical shear wave decay
+        for i,v,w in zip(a_i,thrt_viscosity,omega):
+            a0=wave_decay(0, v)
+            values=np.zeros(nsteps)
+            values=wave_decay(np.arange(nsteps),v)/a0
+            ax3.plot(values, label=f'w={w}')
+        
+        ax3.set_title('Normalized theoretical shear wave decay')
+        ax3.set_xlabel('n timestep')
+        ax3.set_ylabel('a(t)/a(0)')
+        ax3.grid()
+        ax3.legend()
+        
+        plt.subplots_adjust(hspace=0.7)
+        plt.show()
+        
+        #now lets plot the experimental and theoretical viscosities for each omega
+        plt.grid()
+        plt.title('Kinematic viscosity at different omega')
+        plt.xlabel('omega')
+        plt.ylabel('v')
+        plt.plot(omega,exp_viscosity,label='experimental')
+        plt.plot(omega,thrt_viscosity, label='theoretical')
+        plt.legend()
+        
+        plt.show()
+        
+        return exp_viscosity, thrt_viscosity
