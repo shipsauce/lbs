@@ -1,0 +1,125 @@
+# -*- coding: UTF-8 -*-
+import matplotlib.pyplot as plt
+import numpy as np
+from calculations import *
+
+class LatticeB():
+    '''A Lattice Boltzmann simulator class.
+    
+    Parameters:
+    ----------
+    rho: density matrix
+    u_aij: average velocity matrix
+   
+    Attributes:
+    ---------
+    dens_ij: density matrix, copied from input parameter rho
+    velo_aij: average velocity matrix, copied from input parameter u_aij
+    sizex, sizey: size of grid in x- and y-dimension, derived from the size of the density input matrix
+    
+    Methods:
+    ------
+    streaming: performing one streaming step with np.roll
+    collision: one collision step
+    bottom wall: solid bottom boundary
+    top wall: solid top boundary
+    top moving wall: solid top boundary with non-zero velocity in x-component
+    pressure grad: pressure gradient over periodic boundary conditions along the x-axis
+    streaming_col: streaming and collision in one step
+    '''
+    
+    def __init__(self, rho, u_aij):
+        self.dens_ij=rho.copy()
+        self.velo_aij=u_aij.copy()
+        self.sizex=rho.shape[0]
+        self.sizey=rho.shape[1]
+        
+        self.ch_a=[0,1,2,3,4,5,6,7,8] #velocity channels
+        
+        self.f_cij=calc_f_equilibrium(rho, u_aij) #initial equilibrium calculation of the probability density function f     
+        
+    def streaming(self):
+        '''Performs one streaming step by calling own f_cij attribute, and re-assigning it the streamed values.'''
+        for i,cx,cy in zip(self.ch_a,cxs,cys):
+            self.f_cij[i,:,:]=np.roll(self.f_cij[i,:,:],shift=(cx,cy),axis=(0,1))
+            
+    def collision(self, omega=0.5):
+        '''Performs one streaming step by re-calculating the density and velocities before calculating the equilibrium density.
+        The equilibrium density is used to calculate the new probability density after collision.
+        
+        Parameters: 
+                    omega: collision frequency (default=0.5)
+        
+        '''
+        self.dens_ij=density_calc(self.f_cij)
+        self.velo_aij=velocity_calc(self.f_cij)
+        self.feq=calc_f_equilibrium(self.dens_ij, self.velo_aij)
+        
+        self.f_cij = self.f_cij + omega*(self.feq - self.f_cij)
+
+    def bottom_wall(self):
+        '''The wet nodes closest to the wall (indexing [:,:,1]) receive their populations in channel 6, 2 and 5 from 
+        the anti-channels 7, 4 and 8 of the dry nodes (indexing [:,:,0])'''
+        self.f_cij[2,:,1]=self.f_cij[4,:,0]
+        self.f_cij[6,:,1]=self.f_cij[8,:,0]
+        self.f_cij[5,:,1]=self.f_cij[7,:,0]
+        
+    def top_wall(self):
+        '''The wet nodes closest to the wall (indexing [:,:,-2]) receive their populations in channel 4, 8 and 7 from 
+        the anti-channels 2, 6 and 5 of the dry nodes (indexing [:,:,-1])'''
+        self.f_cij[4,:,-2]=self.f_cij[2,:,-1]
+        self.f_cij[8,:,-2]=self.f_cij[6,:,-1]
+        self.f_cij[7,:,-2]=self.f_cij[5,:,-1]
+        
+    def top_pois(self):
+        self.f_cij[4,1:-1,-2]=self.f_cij[2,1:-1,-1]
+        self.f_cij[8,1:-1,-2]=self.f_cij[6,0:-2,-1]+1/60 #nu rör den sig åt höger
+        self.f_cij[7,1:-1,-2]=self.f_cij[5,2:,-1]-1/60
+        
+    def bottom_pois(self):
+        self.f_cij[2,1:-1,1]=self.f_cij[4,1:-1,0]
+        
+        self.f_cij[6,1:-1,1]=self.f_cij[8,2:,0]
+        
+        self.f_cij[5,1:-1,1]=self.f_cij[7,0:-2,0]
+        
+    def left_wall(self):
+        #non symmetric
+        self.f_cij[8,1,1:-1]=self.f_cij[6,0,2:]
+        
+        self.f_cij[1,1,1:-1]=self.f_cij[3,0,1:-1]
+        
+        self.f_cij[5,1,1:-1]=self.f_cij[7,0,0:-2]
+        
+    def right_wall(self):
+        #non symmetric
+        self.f_cij[6,-2,1:-1]=self.f_cij[8,-1,0:-2]
+        
+        self.f_cij[3,-2,1:-1]=self.f_cij[1,-1,1:-1]
+        
+        self.f_cij[7,-2,1:-1]=self.f_cij[5,-1,2:]
+        
+    def top_moving_wall(self):
+        '''Populations 8 and 7 of the wet nodes receive an extra term of +/- 1/60 due to the velocity of the wall.'''
+        self.f_cij[4,:,-2]=self.f_cij[2,:,-1]
+        self.f_cij[8,:,-2]=self.f_cij[6,:,-1]-1/60 #nu rör den sig åt höger
+        self.f_cij[7,:,-2]=self.f_cij[5,:,-1]+1/60
+        
+    def pressure_grad(self,pin,pout):
+        '''Each population 0-8 of the left (indexing [i,0,:]) or right (indexing [i,-1,:]) boundary nodes of the PBC is recalculated.
+            The left side nodes are calculated with values of nodes at the second rightmost position (indexing [i,-2,:]).
+            The right side nodes are calculated with values of nodes at the second leftmost position (indexing [i,1,:]).'''
+        for i in self.ch_a:
+            self.f_cij[i,0,:]=calc_f_equilibrium(pin, self.velo_aij)[i,-2,:] + \
+            (self.f_cij[i,-2,:]-calc_f_equilibrium(self.dens_ij, self.velo_aij)[i,-2,:])
+            
+            self.f_cij[i,-1,:]=calc_f_equilibrium(pout, self.velo_aij)[i,1,:] + \
+            (self.f_cij[i,1,:]-calc_f_equilibrium(self.dens_ij, self.velo_aij)[i,1,:])
+    
+    def streaming_col(self, omega=0.5):
+        '''One streaming and collision step.
+        Parameters: 
+                    omega: collision frequency (default=0.5)
+        '''
+        self.collision(omega)
+        self.streaming()
