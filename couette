@@ -1,0 +1,67 @@
+# -*- coding: UTF-8 -*-
+import numpy as np
+import matplotlib.pyplot as plt
+from calculations import *
+from scipy.optimize import curve_fit
+
+import latticeBoltz as lb
+
+def couette_flow(nx=200,ny=150,omega=0.5,nsteps=3000):
+    '''Simulation of the Couette flow with an implemented solid bottom wall and a moving top wall. The function plots the developing
+        velocity profile in the x-direction and a streamplot of the velocity at the final timestep.
+        Parameters: 
+                    nx: size of grid in x-direction (default=200)
+                    ny: size of grid in y-direction (default=150)
+                    omega: relaxation parameter (default=0.5)
+                    nsteps: number of timesteps (default=3000)
+    '''
+    
+    #initiating density to 1 everywhere
+    rho = np.ones((nx,ny))
+    
+    #initiating the velocity field to zero everywhere
+    u_aij=np.zeros((2,nx,ny))
+    
+    #setting up plots
+    fig= plt.figure()
+    ax1 = fig.add_subplot(2,1,1)
+    ax2 = fig.add_subplot(2,1,2)
+    
+    #instantiating a lattice boltzmann simulator
+    lbs=lb.LatticeB(rho,u_aij)
+    
+    #iterating the simulation
+    for i in range(nsteps):
+        lbs.streaming_col(omega)
+        lbs.bottom_wall()
+        lbs.top_moving_wall()
+        
+        #plotting the velocity in x-direction every 100th timestep
+        if i%100 == 0:
+            #recalculating the velocity
+            ux_ij=velocity_calc(lbs.f_cij)[0]
+            #slicing away the dry nodes
+            ax1.plot(ux_ij[nx-1, 1:-2],alpha=0.7)
+    
+    #recalculating velocity at the end of simulation      
+    velocity=velocity_calc(lbs.f_cij)
+    
+    #setting up streamplot
+    x=np.arange(0,nx)
+    y=np.arange(0,ny)
+    X,Y = np.meshgrid(y,x)
+    ax2.streamplot(X,Y, velocity[0],velocity[1])
+    
+    #setting labels and title
+    ax1.set_xlabel('y')
+    ax1.grid()
+    ax1.set_ylabel('ux')
+    ax1.set_title(f'Development of the Couette flow over {nsteps} timesteps')
+    
+    ax2.set_xlabel('uy')
+    ax2.set_ylabel('ux')
+    ax2.set_title(f'Streamplot of the Couette flow after {nsteps} timesteps')
+    
+    #time to plot
+    plt.subplots_adjust(hspace=0.7)
+    plt.show()
